@@ -1,0 +1,12 @@
+<launch>
+    <arg name="robot_type" default="$(env ROBOT_TYPE)" doc="Robot type: [a1, aliengo, go1, laikago]"/>
+
+    <rosparam file="$(find legged_ros_hw)/config/default.yaml" command="load"/>
+
+    <param name="robot_type" value="$(arg robot_type)"/>
+    <node name="legged_ros_hw" pkg="legged_ros_hw" type="legged_ros_hw"
+          output="screen"
+          respawn="false"
+          clear_params="true"/>
+</launch>
+

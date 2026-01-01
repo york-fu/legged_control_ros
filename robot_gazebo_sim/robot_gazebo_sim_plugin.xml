@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<library path="lib/librobot_gazebo_sim_plugin">
+    <class name="robot_gazebo_sim/RobotGazeboSim" type="robot::RobotGazeboSim">
+        <description>
+            Gazebo plugin for robot simulation without controller_manager dependency.
+            Provides joint state publishing, IMU data publishing, and joint command subscription.
+        </description>
+    </class>
+</library>
+

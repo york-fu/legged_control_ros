@@ -1,0 +1,19 @@
+<launch>
+    <arg name="robot_type" default="$(env ROBOT_TYPE)" doc="Robot type: [a1, aliengo, go1, laikago]"/>
+    
+    <rosparam file="$(find legged_unitree_description)/config/$(arg robot_type)/joint.yaml" command="load"/>
+    
+    <node name="joint_control" pkg="robot_gazebo_sim" type="joint_control" output="screen">
+        <param name="joint_state_topic" value="/joint/states"/>
+        <param name="joint_cmd_topic" value="/joint/commands"/>
+        <param name="joint_params_topic" value="/joint/params"/>
+      
+        <param name="ctrl_freq" value="500.0"/>
+        <param name="traj_amp" value="0.1"/>
+        <param name="traj_freq" value="1.0"/>
+        
+        <!-- Joint indices to control (e.g., [0, 1, 2] for first 3 joints) -->
+        <rosparam param="joint_indices">[0, 1, 2]</rosparam>
+    </node>
+</launch>
+

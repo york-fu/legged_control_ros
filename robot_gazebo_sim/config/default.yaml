@@ -1,0 +1,21 @@
+# Configuration for robot_gazebo_sim plugin
+
+joint_state_topic: "/state/joint"
+imu_topic: "/state/imu"
+contact_state_topic: "state/contact"
+joint_cmd_topic: "/desire/joint/commands"
+joint_params_topic: "/desire/joint/params"
+
+update_rate: 1000.0
+
+gazebo:
+  delay: 0.0
+  
+  imus:
+    base_imu:
+      frame_id: "base"
+      orientation_covariance_diagonal: [0.01, 0.01, 0.01]
+      angular_velocity_covariance: [0.01, 0.01, 0.01]
+      linear_acceleration_covariance: [0.01, 0.01, 0.01]
+  
+  contacts: [ "LF_FOOT", "LH_FOOT", "RF_FOOT", "RH_FOOT" ]
