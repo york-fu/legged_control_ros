@@ -1,29 +1,12 @@
 # legged_control
 
+Forked from qiayuanl/legged_control
+
 > [!NOTE]
 > **This software is not supported anymore! The authors of this software are developing a completely new framework and are not working on this project anymore. Please excuse any inconvenience this might cause.**
 
 > [!NOTE]
 > You might be interested in this pipeline with perception, check [legged_perceptive](https://github.com/qiayuanl/legged_perceptive).
-
-## Publications
-
-If you use this work in an academic context, please consider citing the following publications:
-
-    @misc{leggedcontrol,
-       title = {{legged_control}:  NMPC, WBC, state estimation, and sim2real framework for legged robots based on OCS2 and ros-controls},
-       note = {[Online]. Available: \url{https://github.com/qiayuanl/legged_control}},
-       author = {Qiayuan Liao and others}
-    }
-
-    @inproceedings{liao2023walking,
-      title={Walking in narrow spaces: Safety-critical locomotion control for quadrupedal robots with duality-based optimization},
-      author={Liao, Qiayuan and Li, Zhongyu and Thirugnanam, Akshay and Zeng, Jun and Sreenath, Koushil},
-      booktitle={2023 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
-      pages={2723--2730},
-      year={2023},
-      organization={IEEE}
-    }
 
 ## Introduction
 
@@ -86,7 +69,7 @@ its dependencies following the step below.
 Build the source code of `legged_control` by:
 
 ```
-catkin build legged_controllers legged_unitree_description
+catkin build legged_controllers legged_unitree_description robot_gazebo_sim legged_ros_hw
 ```
 
 Build the simulation (**DO NOT** run on the onboard computer)
@@ -113,7 +96,9 @@ export ROBOT_TYPE=a1
 2. Run the simulation:
 
 ```
-roslaunch legged_unitree_description empty_world.launch
+# roslaunch legged_unitree_description empty_world.launch
+roslaunch robot_gazebo_sim empty_world.launch
+roslaunch legged_ros_hw legged_ros_hw.launch
 ```
 
 Or on the robot hardware:
@@ -262,6 +247,25 @@ Deploying this framework to your robot is very simple, the steps are as follows:
   , inherit `LeggedHW` and implement the `read()` and `write()` functions of the hardware interface;
 - Imitate the legged_examples/legged_unitree/legged_unitree_description, write the xarco of the robot and generate the
   URDF file, note that the names of the joint and link need to be the same as legged_unitree_description.
+
+## Publications
+
+If you use this work in an academic context, please consider citing the following publications:
+
+    @misc{leggedcontrol,
+       title = {{legged_control}:  NMPC, WBC, state estimation, and sim2real framework for legged robots based on OCS2 and ros-controls},
+       note = {[Online]. Available: \url{https://github.com/qiayuanl/legged_control}},
+       author = {Qiayuan Liao and others}
+    }
+
+    @inproceedings{liao2023walking,
+      title={Walking in narrow spaces: Safety-critical locomotion control for quadrupedal robots with duality-based optimization},
+      author={Liao, Qiayuan and Li, Zhongyu and Thirugnanam, Akshay and Zeng, Jun and Sreenath, Koushil},
+      booktitle={2023 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+      pages={2723--2730},
+      year={2023},
+      organization={IEEE}
+    }
 
 ## Reference
 
