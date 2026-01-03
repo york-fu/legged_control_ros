@@ -74,6 +74,8 @@ class LeggedController : public controller_interface::MultiInterfaceController<H
   std::atomic_bool controllerRunning_{}, mpcRunning_{};
   benchmark::RepeatedTimer mpcTimer_;
   benchmark::RepeatedTimer wbcTimer_;
+
+  bool use_contact_sensor_{true};
 };
 
 class LeggedCheaterController : public LeggedController {
