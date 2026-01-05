@@ -6,3 +6,10 @@ controllers:
     type: legged/LeggedController
   legged_cheater_controller:
     type: legged/LeggedCheaterController
+
+  zero_torque_controller:
+    type: legged/ZeroTorqueController
+  damping_controller:
+    type: legged/DampingController
+  initial_pos_controller:
+    type: legged/InitialPosController

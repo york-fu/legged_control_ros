@@ -13,4 +13,25 @@
             The basic legged controller with cheat state estimator
         </description>
     </class>
+
+    <class name="legged/ZeroTorqueController" type="legged::ZeroTorqueController"
+           base_class_type="controller_interface::ControllerBase">
+        <description>
+            Zero torque controller - applies zero torque to all joints
+        </description>
+    </class>
+
+    <class name="legged/DampingController" type="legged::DampingController"
+           base_class_type="controller_interface::ControllerBase">
+        <description>
+            Damping controller - applies damping to joints based on velocity
+        </description>
+    </class>
+
+    <class name="legged/InitialPosController" type="legged::InitialPosController"
+           base_class_type="controller_interface::ControllerBase">
+        <description>
+            Initial position controller - moves robot to default joint positions using linear interpolation
+        </description>
+    </class>
 </library>

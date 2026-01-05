@@ -53,7 +53,11 @@ link_directories(
 
 ## Declare a cpp library
 add_library(${PROJECT_NAME}
+        src/BaseController.cpp
         src/LeggedController.cpp
+        src/ZeroTorqueController.cpp
+        src/DampingController.cpp
+        src/InitialPosController.cpp
         )
 
 target_link_libraries(${PROJECT_NAME}

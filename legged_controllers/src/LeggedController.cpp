@@ -26,271 +26,216 @@
 
 namespace legged {
 bool LeggedController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& controller_nh) {
-  // Initialize OCS2
-  std::string urdfFile;
+  // Initialize base controller (hardware interface and legged interface)
+  if (!BaseController::init(robot_hw, controller_nh)) {
+    return false;
+  }
+
+  // Check if contact sensors are available
+  use_contact_sensor_ = (contact_handles_.size() == 4);  // 4 contact sensors for quadruped
+  if (!use_contact_sensor_) {
+    ROS_WARN("[LeggedController] Contact sensors not available, will use mode-based contact detection");
+  }
+
+  // Get task file for MPC setup
   std::string taskFile;
-  std::string referenceFile;
-  controller_nh.getParam("/urdfFile", urdfFile);
   controller_nh.getParam("/taskFile", taskFile);
-  controller_nh.getParam("/referenceFile", referenceFile);
   bool verbose = false;
   loadData::loadCppDataType(taskFile, "legged_robot_interface.verbose", verbose);
 
-  setupLeggedInterface(taskFile, urdfFile, referenceFile, verbose);
+  // Setup MPC
   setupMpc();
   setupMrt();
+
   // Visualization
   ros::NodeHandle nh;
-  CentroidalModelPinocchioMapping pinocchioMapping(leggedInterface_->getCentroidalModelInfo());
-  eeKinematicsPtr_ = std::make_shared<PinocchioEndEffectorKinematics>(leggedInterface_->getPinocchioInterface(), pinocchioMapping,
-                                                                      leggedInterface_->modelSettings().contactNames3DoF);
-  robotVisualizer_ = std::make_shared<LeggedRobotVisualizer>(leggedInterface_->getPinocchioInterface(),
-                                                             leggedInterface_->getCentroidalModelInfo(), *eeKinematicsPtr_, nh);
-  selfCollisionVisualization_.reset(new LeggedSelfCollisionVisualization(leggedInterface_->getPinocchioInterface(),
-                                                                         leggedInterface_->getGeometryInterface(), pinocchioMapping, nh));
-
-  // Hardware interface
-  auto* hybridJointInterface = robot_hw->get<HybridJointInterface>();
-  std::vector<std::string> joint_names{"LF_HAA", "LF_HFE", "LF_KFE", "LH_HAA", "LH_HFE", "LH_KFE",
-                                       "RF_HAA", "RF_HFE", "RF_KFE", "RH_HAA", "RH_HFE", "RH_KFE"};
-  for (const auto& joint_name : joint_names) {
-    hybridJointHandles_.push_back(hybridJointInterface->getHandle(joint_name));
-  }
-  auto* contactInterface = robot_hw->get<ContactSensorInterface>();
-  for (const auto& name : leggedInterface_->modelSettings().contactNames3DoF) {
-    contactHandles_.push_back(contactInterface->getHandle(name));
-  }
-  imuSensorHandle_ = robot_hw->get<hardware_interface::ImuSensorInterface>()->getHandle("base_imu");
-
-  // State estimation
-  setupStateEstimate(taskFile, verbose);
+  CentroidalModelPinocchioMapping pinocchio_mapping(legged_interface_->getCentroidalModelInfo());
+  robot_visualizer_ = std::make_shared<LeggedRobotVisualizer>(legged_interface_->getPinocchioInterface(),
+                                                             legged_interface_->getCentroidalModelInfo(), *ee_kinematics_ptr_, nh);
+  self_collision_visualization_.reset(new LeggedSelfCollisionVisualization(legged_interface_->getPinocchioInterface(),
+                                                                         legged_interface_->getGeometryInterface(), pinocchio_mapping, nh));
 
   // Whole body control
-  wbc_ = std::make_shared<WeightedWbc>(leggedInterface_->getPinocchioInterface(), leggedInterface_->getCentroidalModelInfo(),
-                                       *eeKinematicsPtr_);
+  wbc_ = std::make_shared<WeightedWbc>(legged_interface_->getPinocchioInterface(), legged_interface_->getCentroidalModelInfo(),
+                                       *ee_kinematics_ptr_);
   wbc_->loadTasksSetting(taskFile, verbose);
 
   // Safety Checker
-  safetyChecker_ = std::make_shared<SafetyChecker>(leggedInterface_->getCentroidalModelInfo());
+  safety_checker_ = std::make_shared<SafetyChecker>(legged_interface_->getCentroidalModelInfo());
 
   return true;
 }
 
 void LeggedController::starting(const ros::Time& time) {
   // Initial state
-  currentObservation_.state.setZero(leggedInterface_->getCentroidalModelInfo().stateDim);
-  updateStateEstimation(time, ros::Duration(0.002));
-  currentObservation_.input.setZero(leggedInterface_->getCentroidalModelInfo().inputDim);
-  currentObservation_.mode = ModeNumber::STANCE;
+  current_observation_.state.setZero(legged_interface_->getCentroidalModelInfo().stateDim);
+  BaseController::updateStateEstimation(time, ros::Duration(0.002));
+  current_observation_.input.setZero(legged_interface_->getCentroidalModelInfo().inputDim);
+  current_observation_.mode = ModeNumber::STANCE;
 
-  TargetTrajectories target_trajectories({currentObservation_.time}, {currentObservation_.state}, {currentObservation_.input});
+  TargetTrajectories target_trajectories({current_observation_.time}, {current_observation_.state}, {current_observation_.input});
 
   // Set the first observation and command and wait for optimization to finish
-  mpcMrtInterface_->setCurrentObservation(currentObservation_);
-  mpcMrtInterface_->getReferenceManager().setTargetTrajectories(target_trajectories);
+  mpc_mrt_interface_->setCurrentObservation(current_observation_);
+  mpc_mrt_interface_->getReferenceManager().setTargetTrajectories(target_trajectories);
   ROS_INFO_STREAM("Waiting for the initial policy ...");
-  while (!mpcMrtInterface_->initialPolicyReceived() && ros::ok()) {
-    mpcMrtInterface_->advanceMpc();
-    ros::WallRate(leggedInterface_->mpcSettings().mrtDesiredFrequency_).sleep();
+  while (!mpc_mrt_interface_->initialPolicyReceived() && ros::ok()) {
+    mpc_mrt_interface_->advanceMpc();
+    ros::WallRate(legged_interface_->mpcSettings().mrtDesiredFrequency_).sleep();
   }
   ROS_INFO_STREAM("Initial policy has been received.");
 
-  mpcRunning_ = true;
+  mpc_running_ = true;
 }
 
 void LeggedController::update(const ros::Time& time, const ros::Duration& period) {
-  // State Estimate
-  updateStateEstimation(time, period);
+  // State Estimate (from BaseController)
+  BaseController::updateStateEstimation(time, period);
 
   // Update the current state of the system
-  mpcMrtInterface_->setCurrentObservation(currentObservation_);
+  mpc_mrt_interface_->setCurrentObservation(current_observation_);
 
   // Load the latest MPC policy
-  mpcMrtInterface_->updatePolicy();
+  mpc_mrt_interface_->updatePolicy();
 
   // Evaluate the current policy
-  vector_t optimizedState, optimizedInput;
-  size_t plannedMode = 0;  // The mode that is active at the time the policy is evaluated at.
+  vector_t optimized_state, optimized_input;
+  size_t planned_mode = 0;  // The mode that is active at the time the policy is evaluated at.
   if (use_contact_sensor_)
   {
-    mpcMrtInterface_->evaluatePolicy(currentObservation_.time, currentObservation_.state, optimizedState, optimizedInput, plannedMode);
+    mpc_mrt_interface_->evaluatePolicy(current_observation_.time, current_observation_.state, optimized_state, optimized_input, planned_mode);
   }
   else
   {
-    if (mpcMrtInterface_->isRolloutSet())
+    if (mpc_mrt_interface_->isRolloutSet())
     {
-      mpcMrtInterface_->rolloutPolicy(currentObservation_.time,
-                                      currentObservation_.state,
+      mpc_mrt_interface_->rolloutPolicy(current_observation_.time,
+                                      current_observation_.state,
                                       period.toSec(),
-                                      optimizedState,
-                                      optimizedInput,
-                                      plannedMode);
+                                      optimized_state,
+                                      optimized_input,
+                                      planned_mode);
     }
     else
     {
-      mpcMrtInterface_->evaluatePolicy(currentObservation_.time,
-                                       currentObservation_.state,
-                                       optimizedState,
-                                       optimizedInput,
-                                       plannedMode);
+      mpc_mrt_interface_->evaluatePolicy(current_observation_.time,
+                                       current_observation_.state,
+                                       optimized_state,
+                                       optimized_input,
+                                       planned_mode);
     }
-    currentObservation_.mode = plannedMode;
+    current_observation_.mode = planned_mode;
   }
 
   // Whole body control
-  currentObservation_.input = optimizedInput;
+  current_observation_.input = optimized_input;
 
-  wbcTimer_.startTimer();
-  vector_t x = wbc_->update(optimizedState, optimizedInput, measuredRbdState_, plannedMode, period.toSec());
-  wbcTimer_.endTimer();
+  wbc_timer_.startTimer();
+  vector_t x = wbc_->update(optimized_state, optimized_input, measured_rbd_state_, planned_mode, period.toSec());
+  wbc_timer_.endTimer();
 
   vector_t torque = x.tail(12);
 
-  vector_t posDes = centroidal_model::getJointAngles(optimizedState, leggedInterface_->getCentroidalModelInfo());
-  vector_t velDes = centroidal_model::getJointVelocities(optimizedInput, leggedInterface_->getCentroidalModelInfo());
+  vector_t pos_des = centroidal_model::getJointAngles(optimized_state, legged_interface_->getCentroidalModelInfo());
+  vector_t vel_des = centroidal_model::getJointVelocities(optimized_input, legged_interface_->getCentroidalModelInfo());
 
   // Safety check, if failed, stop the controller
-  if (!safetyChecker_->check(currentObservation_, optimizedState, optimizedInput)) {
+  if (!safety_checker_->check(current_observation_, optimized_state, optimized_input)) {
     ROS_ERROR_STREAM("[Legged Controller] Safety check failed, stopping the controller.");
     stopRequest(time);
   }
 
-  for (size_t j = 0; j < leggedInterface_->getCentroidalModelInfo().actuatedDofNum; ++j) {
-    hybridJointHandles_[j].setCommand(posDes(j), velDes(j), 0, 3, torque(j));
-  }
+  // Write commands using BaseController interface
+  vector_t kp = vector_t::Zero(pos_des.size());
+  vector_t kd = vector_t::Constant(pos_des.size(), 3.0);
+  setJointCmd(pos_des, vel_des, torque, kp, kd);
 
   // Visualization
-  robotVisualizer_->update(currentObservation_, mpcMrtInterface_->getPolicy(), mpcMrtInterface_->getCommand());
-  selfCollisionVisualization_->update(currentObservation_);
+  robot_visualizer_->update(current_observation_, mpc_mrt_interface_->getPolicy(), mpc_mrt_interface_->getCommand());
+  self_collision_visualization_->update(current_observation_);
 
   // Publish the observation. Only needed for the command interface
-  observationPublisher_.publish(ros_msg_conversions::createObservationMsg(currentObservation_));
+  observation_publisher_.publish(ros_msg_conversions::createObservationMsg(current_observation_));
 }
 
-void LeggedController::updateStateEstimation(const ros::Time& time, const ros::Duration& period) {
-  vector_t jointPos(hybridJointHandles_.size()), jointVel(hybridJointHandles_.size());
-  contact_flag_t contacts;
-  Eigen::Quaternion<scalar_t> quat;
-  contact_flag_t contactFlag;
-  vector3_t angularVel, linearAccel;
-  matrix3_t orientationCovariance, angularVelCovariance, linearAccelCovariance;
-
-  for (size_t i = 0; i < hybridJointHandles_.size(); ++i) {
-    jointPos(i) = hybridJointHandles_[i].getPosition();
-    jointVel(i) = hybridJointHandles_[i].getVelocity();
-  }
-  if (use_contact_sensor_)
-  {
-    for (size_t i = 0; i < contacts.size(); ++i) {
-      contactFlag[i] = contactHandles_[i].isContact();
-    }
-  }
-  else
-  {
-    contactFlag = modeNumber2StanceLeg(currentObservation_.mode);
-  }
-  for (size_t i = 0; i < 4; ++i) {
-    quat.coeffs()(i) = imuSensorHandle_.getOrientation()[i];
-  }
-  for (size_t i = 0; i < 3; ++i) {
-    angularVel(i) = imuSensorHandle_.getAngularVelocity()[i];
-    linearAccel(i) = imuSensorHandle_.getLinearAcceleration()[i];
-  }
-  for (size_t i = 0; i < 9; ++i) {
-    orientationCovariance(i) = imuSensorHandle_.getOrientationCovariance()[i];
-    angularVelCovariance(i) = imuSensorHandle_.getAngularVelocityCovariance()[i];
-    linearAccelCovariance(i) = imuSensorHandle_.getLinearAccelerationCovariance()[i];
-  }
-
-  stateEstimate_->updateJointStates(jointPos, jointVel);
-  stateEstimate_->updateContact(contactFlag);
-  stateEstimate_->updateImu(quat, angularVel, linearAccel, orientationCovariance, angularVelCovariance, linearAccelCovariance);
-  measuredRbdState_ = stateEstimate_->update(time, period);
-  currentObservation_.time += period.toSec();
-  scalar_t yawLast = currentObservation_.state(9);
-  currentObservation_.state = rbdConversions_->computeCentroidalStateFromRbdModel(measuredRbdState_);
-  currentObservation_.state(9) = yawLast + angles::shortest_angular_distance(yawLast, currentObservation_.state(9));
-  currentObservation_.mode = stateEstimate_->getMode();
-}
 
 LeggedController::~LeggedController() {
-  controllerRunning_ = false;
-  if (mpcThread_.joinable()) {
-    mpcThread_.join();
+  controller_running_ = false;
+  if (mpc_thread_.joinable()) {
+    mpc_thread_.join();
   }
   std::cerr << "########################################################################";
   std::cerr << "\n### MPC Benchmarking";
-  std::cerr << "\n###   Maximum : " << mpcTimer_.getMaxIntervalInMilliseconds() << "[ms].";
-  std::cerr << "\n###   Average : " << mpcTimer_.getAverageInMilliseconds() << "[ms]." << std::endl;
+  std::cerr << "\n###   Maximum : " << mpc_timer_.getMaxIntervalInMilliseconds() << "[ms].";
+  std::cerr << "\n###   Average : " << mpc_timer_.getAverageInMilliseconds() << "[ms]." << std::endl;
   std::cerr << "########################################################################";
   std::cerr << "\n### WBC Benchmarking";
-  std::cerr << "\n###   Maximum : " << wbcTimer_.getMaxIntervalInMilliseconds() << "[ms].";
-  std::cerr << "\n###   Average : " << wbcTimer_.getAverageInMilliseconds() << "[ms].";
+  std::cerr << "\n###   Maximum : " << wbc_timer_.getMaxIntervalInMilliseconds() << "[ms].";
+  std::cerr << "\n###   Average : " << wbc_timer_.getAverageInMilliseconds() << "[ms].";
 }
 
-void LeggedController::setupLeggedInterface(const std::string& taskFile, const std::string& urdfFile, const std::string& referenceFile,
-                                            bool verbose) {
-  leggedInterface_ = std::make_shared<LeggedInterface>(taskFile, urdfFile, referenceFile);
-  leggedInterface_->setupOptimalControlProblem(taskFile, urdfFile, referenceFile, verbose);
-}
 
 void LeggedController::setupMpc() {
-  mpc_ = std::make_shared<SqpMpc>(leggedInterface_->mpcSettings(), leggedInterface_->sqpSettings(),
-                                  leggedInterface_->getOptimalControlProblem(), leggedInterface_->getInitializer());
-  rbdConversions_ = std::make_shared<CentroidalModelRbdConversions>(leggedInterface_->getPinocchioInterface(),
-                                                                    leggedInterface_->getCentroidalModelInfo());
+  mpc_ = std::make_shared<SqpMpc>(legged_interface_->mpcSettings(), legged_interface_->sqpSettings(),
+                                  legged_interface_->getOptimalControlProblem(), legged_interface_->getInitializer());
+  rbd_conversions_ = std::make_shared<CentroidalModelRbdConversions>(legged_interface_->getPinocchioInterface(),
+                                                                    legged_interface_->getCentroidalModelInfo());
 
-  const std::string robotName = "legged_robot";
+  const std::string robot_name = "legged_robot";
   ros::NodeHandle nh;
   // Gait receiver
-  auto gaitReceiverPtr =
-      std::make_shared<GaitReceiver>(nh, leggedInterface_->getSwitchedModelReferenceManagerPtr()->getGaitSchedule(), robotName);
+  auto gait_receiver_ptr =
+      std::make_shared<GaitReceiver>(nh, legged_interface_->getSwitchedModelReferenceManagerPtr()->getGaitSchedule(), robot_name);
   // ROS ReferenceManager
-  auto rosReferenceManagerPtr = std::make_shared<RosReferenceManager>(robotName, leggedInterface_->getReferenceManagerPtr());
-  rosReferenceManagerPtr->subscribe(nh);
-  mpc_->getSolverPtr()->addSynchronizedModule(gaitReceiverPtr);
-  mpc_->getSolverPtr()->setReferenceManager(rosReferenceManagerPtr);
-  observationPublisher_ = nh.advertise<ocs2_msgs::mpc_observation>(robotName + "_mpc_observation", 1);
+  auto ros_reference_manager_ptr = std::make_shared<RosReferenceManager>(robot_name, legged_interface_->getReferenceManagerPtr());
+  ros_reference_manager_ptr->subscribe(nh);
+  mpc_->getSolverPtr()->addSynchronizedModule(gait_receiver_ptr);
+  mpc_->getSolverPtr()->setReferenceManager(ros_reference_manager_ptr);
+  observation_publisher_ = nh.advertise<ocs2_msgs::mpc_observation>(robot_name + "_mpc_observation", 1);
 }
 
 void LeggedController::setupMrt() {
-  mpcMrtInterface_ = std::make_shared<MPC_MRT_Interface>(*mpc_);
-  mpcMrtInterface_->initRollout(&leggedInterface_->getRollout());
-  mpcTimer_.reset();
+  mpc_mrt_interface_ = std::make_shared<MPC_MRT_Interface>(*mpc_);
+  mpc_mrt_interface_->initRollout(&legged_interface_->getRollout());
+  mpc_timer_.reset();
 
-  controllerRunning_ = true;
-  mpcThread_ = std::thread([&]() {
-    while (controllerRunning_) {
+  controller_running_ = true;
+  mpc_thread_ = std::thread([&]() {
+    while (controller_running_) {
       try {
         executeAndSleep(
             [&]() {
-              if (mpcRunning_) {
-                mpcTimer_.startTimer();
-                mpcMrtInterface_->advanceMpc();
-                mpcTimer_.endTimer();
+              if (mpc_running_) {
+                mpc_timer_.startTimer();
+                mpc_mrt_interface_->advanceMpc();
+                mpc_timer_.endTimer();
               }
             },
-            leggedInterface_->mpcSettings().mpcDesiredFrequency_);
+            legged_interface_->mpcSettings().mrtDesiredFrequency_);
       } catch (const std::exception& e) {
-        controllerRunning_ = false;
+        controller_running_ = false;
         ROS_ERROR_STREAM("[Ocs2 MPC thread] Error : " << e.what());
         stopRequest(ros::Time());
       }
     }
   });
-  setThreadPriority(leggedInterface_->sqpSettings().threadPriority, mpcThread_);
+  setThreadPriority(legged_interface_->sqpSettings().threadPriority, mpc_thread_);
 }
 
-void LeggedController::setupStateEstimate(const std::string& taskFile, bool verbose) {
-  stateEstimate_ = std::make_shared<KalmanFilterEstimate>(leggedInterface_->getPinocchioInterface(),
-                                                          leggedInterface_->getCentroidalModelInfo(), *eeKinematicsPtr_);
-  dynamic_cast<KalmanFilterEstimate&>(*stateEstimate_).loadSettings(taskFile, verbose);
-  currentObservation_.time = 0;
+contact_flag_t LeggedController::getContactState() {
+  contact_flag_t contact_flag;
+  if (use_contact_sensor_)
+  {
+    return BaseController::getContactState();
+  }
+  contact_flag = modeNumber2StanceLeg(current_observation_.mode);
+  return contact_flag;
 }
 
-void LeggedCheaterController::setupStateEstimate(const std::string& /*taskFile*/, bool /*verbose*/) {
-  stateEstimate_ = std::make_shared<FromTopicStateEstimate>(leggedInterface_->getPinocchioInterface(),
-                                                            leggedInterface_->getCentroidalModelInfo(), *eeKinematicsPtr_);
+
+void LeggedCheaterController::setupStateEstimate(const std::string& /*task_file*/, bool /*verbose*/) {
+  state_estimate_ = std::make_shared<FromTopicStateEstimate>(legged_interface_->getPinocchioInterface(),
+                                                            legged_interface_->getCentroidalModelInfo(), *ee_kinematics_ptr_);
 }
 
 }  // namespace legged

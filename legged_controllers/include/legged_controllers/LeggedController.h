@@ -17,6 +17,7 @@
 #include <legged_interface/LeggedInterface.h>
 #include <legged_wbc/WbcBase.h>
 
+#include "legged_controllers/BaseController.h"
 #include "legged_controllers/SafetyChecker.h"
 #include "legged_controllers/visualization/LeggedSelfCollisionVisualization.h"
 
@@ -24,63 +25,47 @@ namespace legged {
 using namespace ocs2;
 using namespace legged_robot;
 
-class LeggedController : public controller_interface::MultiInterfaceController<HybridJointInterface, hardware_interface::ImuSensorInterface,
-                                                                               ContactSensorInterface> {
+class LeggedController : public BaseController {
  public:
   LeggedController() = default;
   ~LeggedController() override;
   bool init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& controller_nh) override;
   void update(const ros::Time& time, const ros::Duration& period) override;
   void starting(const ros::Time& time) override;
-  void stopping(const ros::Time& /*time*/) override { mpcRunning_ = false; }
+  void stopping(const ros::Time& /*time*/) override { mpc_running_ = false; }
 
  protected:
-  virtual void updateStateEstimation(const ros::Time& time, const ros::Duration& period);
-
-  virtual void setupLeggedInterface(const std::string& taskFile, const std::string& urdfFile, const std::string& referenceFile,
-                                    bool verbose);
   virtual void setupMpc();
   virtual void setupMrt();
-  virtual void setupStateEstimate(const std::string& taskFile, bool verbose);
-
-  // Interface
-  std::shared_ptr<LeggedInterface> leggedInterface_;
-  std::shared_ptr<PinocchioEndEffectorKinematics> eeKinematicsPtr_;
-  std::vector<HybridJointHandle> hybridJointHandles_;
-  std::vector<ContactSensorHandle> contactHandles_;
-  hardware_interface::ImuSensorHandle imuSensorHandle_;
-
-  // State Estimation
-  SystemObservation currentObservation_;
-  vector_t measuredRbdState_;
-  std::shared_ptr<StateEstimateBase> stateEstimate_;
-  std::shared_ptr<CentroidalModelRbdConversions> rbdConversions_;
+  
+  // Override getContactState to use contact sensors when available
+  contact_flag_t getContactState() override;
 
   // Whole Body Control
   std::shared_ptr<WbcBase> wbc_;
-  std::shared_ptr<SafetyChecker> safetyChecker_;
+  std::shared_ptr<SafetyChecker> safety_checker_;
 
   // Nonlinear MPC
   std::shared_ptr<MPC_BASE> mpc_;
-  std::shared_ptr<MPC_MRT_Interface> mpcMrtInterface_;
+  std::shared_ptr<MPC_MRT_Interface> mpc_mrt_interface_;
 
   // Visualization
-  std::shared_ptr<LeggedRobotVisualizer> robotVisualizer_;
-  std::shared_ptr<LeggedSelfCollisionVisualization> selfCollisionVisualization_;
-  ros::Publisher observationPublisher_;
+  std::shared_ptr<LeggedRobotVisualizer> robot_visualizer_;
+  std::shared_ptr<LeggedSelfCollisionVisualization> self_collision_visualization_;
+  ros::Publisher observation_publisher_;
 
  private:
-  std::thread mpcThread_;
-  std::atomic_bool controllerRunning_{}, mpcRunning_{};
-  benchmark::RepeatedTimer mpcTimer_;
-  benchmark::RepeatedTimer wbcTimer_;
+  std::thread mpc_thread_;
+  std::atomic_bool controller_running_{}, mpc_running_{};
+  benchmark::RepeatedTimer mpc_timer_;
+  benchmark::RepeatedTimer wbc_timer_;
 
   bool use_contact_sensor_{true};
 };
 
 class LeggedCheaterController : public LeggedController {
  protected:
-  void setupStateEstimate(const std::string& taskFile, bool verbose) override;
+  void setupStateEstimate(const std::string& task_file, bool verbose) override;
 };
 
 }  // namespace legged
